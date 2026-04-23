@@ -541,6 +541,47 @@ h3 {
   font-size: 0.92rem;
 }
 
+.audio-settings-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(255, 248, 239, 0.05);
+  border: 1px solid rgba(255, 248, 239, 0.1);
+}
+
+.audio-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.audio-toggle input {
+  margin: 2px 0 0;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent-strong);
+  flex: 0 0 auto;
+}
+
+.audio-toggle-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.audio-toggle-copy strong {
+  color: var(--text-main);
+  font-size: 0.94rem;
+  font-weight: 700;
+}
+
+.audio-toggle-copy small {
+  color: var(--text-soft);
+  font-size: 0.82rem;
+  line-height: 1.42;
+}
+
 .primary-button,
 .secondary-button,
 .ghost-button,
@@ -1251,6 +1292,10 @@ body.store-capture .app-shell {
     font-size: 0.86rem;
     line-height: 1.38;
   }
+
+  .audio-settings-card {
+    padding: 10px 12px;
+  }
 }
 
 @media (max-width: 460px) {
@@ -1292,6 +1337,18 @@ body.store-capture .app-shell {
   .panel-copy,
   .setup-note {
     font-size: 0.88rem;
+  }
+
+  .audio-toggle {
+    gap: 10px;
+  }
+
+  .audio-toggle-copy strong {
+    font-size: 0.9rem;
+  }
+
+  .audio-toggle-copy small {
+    font-size: 0.8rem;
   }
 
   .setup-grid {

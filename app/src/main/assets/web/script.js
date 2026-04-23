@@ -93,6 +93,7 @@ const WIN_TEXT = {
 
 const MIN_PLAYERS = 3;
 const MAX_PLAYERS = 8;
+const AUDIO_STORAGE_KEY = "fogbound-mafia-audio-settings-v1";
 
 const setupView = document.getElementById("setup-view");
 const gameView = document.getElementById("game-view");
@@ -106,6 +107,8 @@ const mafiaLabel = document.getElementById("mafia-label");
 const doctorLabel = document.getElementById("doctor-label");
 const policeLabel = document.getElementById("police-label");
 const setupNote = document.getElementById("setup-note");
+const voiceEnabledToggle = document.getElementById("voice-enabled");
+const effectsEnabledToggle = document.getElementById("effects-enabled");
 const startButton = document.getElementById("start-button");
 
 const brandTitle = document.getElementById("brand-title");
@@ -151,6 +154,8 @@ const state = {
     doctorCount: 1,
     policeCount: 0,
     timerSeconds: 60,
+    voiceEnabled: true,
+    effectsEnabled: true,
   },
   players: [],
   phase: "setup",
@@ -177,6 +182,11 @@ const revealLineMemory = {
 };
 
 const titleArtCache = new Map();
+const audioState = {
+  context: null,
+  pendingNarrationTimer: null,
+  preferredVoice: null,
+};
 const STORE_CAPTURE_MODE = new URLSearchParams(window.location.search).get("storeCapture");
 
 bootstrap();
@@ -188,6 +198,7 @@ if (STORE_CAPTURE_MODE) {
 }
 
 function bootstrap() {
+  restoreAudioPreferences();
   localizeStaticLabels();
   applyPhaseLayout();
   setupTitleArt();
@@ -196,12 +207,16 @@ function bootstrap() {
   renderSetupSummary();
   renderSetupHints();
   updateTimerUI();
+  syncAudioPreferenceControls();
+  installAudioInteractions();
 
   playerCountSelect.addEventListener("change", handleConfigChange);
   mafiaCountSelect.addEventListener("change", handleConfigChange);
   doctorCountSelect.addEventListener("change", handleConfigChange);
   policeCountSelect.addEventListener("change", handleConfigChange);
   timerSecondsSelect.addEventListener("change", handleConfigChange);
+  voiceEnabledToggle?.addEventListener("change", handleAudioPreferenceChange);
+  effectsEnabledToggle?.addEventListener("change", handleAudioPreferenceChange);
   startButton.addEventListener("click", startGameFromSetup);
   primaryActionButton.addEventListener("click", handlePrimaryAction);
   restartGameButton.addEventListener("click", handleRestartRequest);
@@ -481,6 +496,342 @@ function localizeStaticLabels() {
   rosterMeta.classList.add("hidden");
 }
 
+function restoreAudioPreferences() {
+  try {
+    const saved = window.localStorage.getItem(AUDIO_STORAGE_KEY);
+    if (!saved) {
+      return;
+    }
+
+    const parsed = JSON.parse(saved);
+    state.config.voiceEnabled = parsed.voiceEnabled !== false;
+    state.config.effectsEnabled = parsed.effectsEnabled !== false;
+  } catch (error) {
+    console.warn("오디오 설정을 불러오지 못했습니다.", error);
+  }
+}
+
+function saveAudioPreferences() {
+  try {
+    window.localStorage.setItem(
+      AUDIO_STORAGE_KEY,
+      JSON.stringify({
+        voiceEnabled: state.config.voiceEnabled,
+        effectsEnabled: state.config.effectsEnabled,
+      }),
+    );
+  } catch (error) {
+    console.warn("오디오 설정을 저장하지 못했습니다.", error);
+  }
+}
+
+function syncAudioPreferenceControls() {
+  if (voiceEnabledToggle) {
+    voiceEnabledToggle.checked = state.config.voiceEnabled;
+  }
+
+  if (effectsEnabledToggle) {
+    effectsEnabledToggle.checked = state.config.effectsEnabled;
+  }
+}
+
+function handleAudioPreferenceChange() {
+  primeAudioFromGesture();
+
+  state.config.voiceEnabled = voiceEnabledToggle?.checked ?? true;
+  state.config.effectsEnabled = effectsEnabledToggle?.checked ?? true;
+  saveAudioPreferences();
+
+  if (!state.config.voiceEnabled) {
+    stopNarration();
+  }
+}
+
+function installAudioInteractions() {
+  const unlockAudio = () => {
+    primeAudioFromGesture();
+  };
+
+  window.addEventListener("pointerdown", unlockAudio, { once: true, passive: true });
+  window.addEventListener("keydown", unlockAudio, { once: true });
+
+  if (!("speechSynthesis" in window)) {
+    return;
+  }
+
+  cachePreferredVoice();
+
+  if (typeof window.speechSynthesis.addEventListener === "function") {
+    window.speechSynthesis.addEventListener("voiceschanged", cachePreferredVoice);
+  }
+}
+
+function cachePreferredVoice() {
+  if (!("speechSynthesis" in window) || typeof window.speechSynthesis.getVoices !== "function") {
+    audioState.preferredVoice = null;
+    return null;
+  }
+
+  const voices = window.speechSynthesis.getVoices();
+  audioState.preferredVoice =
+    voices.find((voice) => voice.lang?.toLowerCase().startsWith("ko")) ??
+    voices.find((voice) => voice.default) ??
+    voices[0] ??
+    null;
+
+  return audioState.preferredVoice;
+}
+
+function primeAudioFromGesture() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) {
+    return null;
+  }
+
+  if (!audioState.context) {
+    audioState.context = new AudioContextClass();
+  }
+
+  if (audioState.context.state === "suspended") {
+    audioState.context.resume().catch(() => {});
+  }
+
+  return audioState.context;
+}
+
+function stopNarration() {
+  if (audioState.pendingNarrationTimer) {
+    window.clearTimeout(audioState.pendingNarrationTimer);
+    audioState.pendingNarrationTimer = null;
+  }
+
+  if ("speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+  }
+}
+
+function announceScene(effectName, voiceText = "", options = {}) {
+  if (options.interrupt !== false) {
+    stopNarration();
+  }
+
+  if (effectName) {
+    playEffect(effectName);
+  }
+
+  if (!voiceText || !state.config.voiceEnabled) {
+    return;
+  }
+
+  const delayMs = options.delayMs ?? (state.config.effectsEnabled ? 140 : 0);
+  const speechOptions = options.speech ?? {};
+
+  audioState.pendingNarrationTimer = window.setTimeout(() => {
+    speakNarration(voiceText, speechOptions);
+  }, delayMs);
+}
+
+function speakNarration(text, options = {}) {
+  if (
+    !state.config.voiceEnabled ||
+    !("speechSynthesis" in window) ||
+    typeof window.SpeechSynthesisUtterance !== "function"
+  ) {
+    return;
+  }
+
+  const message = text.replace(/\s+/g, " ").trim();
+  if (!message) {
+    return;
+  }
+
+  const utterance = new window.SpeechSynthesisUtterance(message);
+  utterance.lang = "ko-KR";
+  utterance.rate = options.rate ?? 0.96;
+  utterance.pitch = options.pitch ?? 1;
+  utterance.volume = options.volume ?? 0.92;
+
+  const preferredVoice = audioState.preferredVoice ?? cachePreferredVoice();
+  if (preferredVoice) {
+    utterance.voice = preferredVoice;
+  }
+
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utterance);
+}
+
+function playEffect(effectName) {
+  if (!state.config.effectsEnabled) {
+    return;
+  }
+
+  const context = primeAudioFromGesture();
+  if (!context) {
+    return;
+  }
+
+  const start = context.currentTime + 0.01;
+
+  switch (effectName) {
+    case "reveal-entry":
+      scheduleTone(context, start, 520, 0.05, { type: "triangle", gain: 0.024 });
+      scheduleTone(context, start + 0.08, 760, 0.08, { type: "triangle", gain: 0.02 });
+      break;
+    case "reveal-role":
+      scheduleTone(context, start, 340, 0.16, {
+        type: "sawtooth",
+        gain: 0.028,
+        endFrequency: 430,
+      });
+      scheduleNoise(context, start + 0.02, 0.08, { gain: 0.006, frequency: 1600, q: 1.4 });
+      break;
+    case "reveal-pass":
+      scheduleTone(context, start, 660, 0.05, { type: "triangle", gain: 0.018 });
+      scheduleTone(context, start + 0.06, 880, 0.05, { type: "triangle", gain: 0.015 });
+      break;
+    case "night-start":
+      scheduleTone(context, start, 180, 0.3, {
+        type: "sine",
+        gain: 0.036,
+        endFrequency: 110,
+      });
+      scheduleNoise(context, start + 0.03, 0.14, { gain: 0.0035, frequency: 520, q: 0.75 });
+      break;
+    case "night-mafia":
+      scheduleTone(context, start, 150, 0.12, {
+        type: "sawtooth",
+        gain: 0.032,
+        endFrequency: 116,
+      });
+      scheduleTone(context, start + 0.18, 126, 0.12, {
+        type: "sawtooth",
+        gain: 0.026,
+        endFrequency: 98,
+      });
+      break;
+    case "night-doctor":
+      scheduleTone(context, start, 430, 0.08, { type: "triangle", gain: 0.024 });
+      scheduleTone(context, start + 0.09, 620, 0.1, { type: "triangle", gain: 0.018 });
+      break;
+    case "night-police":
+      scheduleTone(context, start, 460, 0.07, { type: "square", gain: 0.014 });
+      scheduleTone(context, start + 0.08, 620, 0.06, { type: "square", gain: 0.012 });
+      scheduleTone(context, start + 0.16, 520, 0.08, { type: "square", gain: 0.011 });
+      break;
+    case "police-result":
+      scheduleTone(context, start, 740, 0.12, { type: "triangle", gain: 0.018 });
+      break;
+    case "dawn-death":
+      scheduleTone(context, start, 320, 0.22, { type: "triangle", gain: 0.026 });
+      scheduleNoise(context, start + 0.12, 0.16, { gain: 0.006, frequency: 900, q: 1 });
+      break;
+    case "dawn-safe":
+      scheduleTone(context, start, 420, 0.08, { type: "triangle", gain: 0.018 });
+      scheduleTone(context, start + 0.1, 560, 0.12, { type: "triangle", gain: 0.015 });
+      break;
+    case "day-discussion":
+      scheduleTone(context, start, 390, 0.08, { type: "triangle", gain: 0.02 });
+      scheduleTone(context, start + 0.09, 520, 0.12, { type: "triangle", gain: 0.016 });
+      break;
+    case "vote-entry":
+      scheduleTone(context, start, 170, 0.05, {
+        type: "sine",
+        gain: 0.048,
+        endFrequency: 124,
+      });
+      scheduleNoise(context, start, 0.04, { gain: 0.012, frequency: 220, q: 0.8 });
+      break;
+    case "vote-choice":
+      scheduleTone(context, start, 500, 0.06, { type: "square", gain: 0.014 });
+      break;
+    case "vote-tie":
+      scheduleTone(context, start, 400, 0.1, { type: "triangle", gain: 0.018 });
+      scheduleTone(context, start + 0.14, 350, 0.14, { type: "triangle", gain: 0.016 });
+      break;
+    case "vote-result":
+      scheduleTone(context, start, 260, 0.08, { type: "sawtooth", gain: 0.026 });
+      scheduleTone(context, start + 0.1, 220, 0.14, { type: "triangle", gain: 0.02 });
+      break;
+    case "timer-end":
+      scheduleTone(context, start, 920, 0.03, { type: "square", gain: 0.012 });
+      scheduleTone(context, start + 0.12, 920, 0.03, { type: "square", gain: 0.012 });
+      scheduleTone(context, start + 0.24, 920, 0.04, { type: "square", gain: 0.014 });
+      break;
+    case "win-town":
+      scheduleTone(context, start, 420, 0.12, { type: "triangle", gain: 0.018 });
+      scheduleTone(context, start + 0.12, 560, 0.12, { type: "triangle", gain: 0.018 });
+      scheduleTone(context, start + 0.24, 700, 0.18, { type: "triangle", gain: 0.02 });
+      break;
+    case "win-mafia":
+      scheduleTone(context, start, 310, 0.14, { type: "sawtooth", gain: 0.022 });
+      scheduleTone(context, start + 0.14, 250, 0.16, { type: "sawtooth", gain: 0.024 });
+      scheduleTone(context, start + 0.3, 196, 0.24, { type: "triangle", gain: 0.026 });
+      break;
+    default:
+      scheduleTone(context, start, 540, 0.04, { type: "triangle", gain: 0.012 });
+  }
+}
+
+function scheduleTone(context, start, frequency, duration, options = {}) {
+  const oscillator = context.createOscillator();
+  const gainNode = context.createGain();
+
+  oscillator.type = options.type ?? "sine";
+  oscillator.frequency.setValueAtTime(frequency, start);
+
+  if (options.endFrequency && options.endFrequency !== frequency) {
+    oscillator.frequency.exponentialRampToValueAtTime(options.endFrequency, start + duration);
+  }
+
+  const attack = options.attack ?? 0.01;
+  const release = options.release ?? 0.12;
+  const peakGain = options.gain ?? 0.03;
+
+  gainNode.gain.setValueAtTime(0.0001, start);
+  gainNode.gain.exponentialRampToValueAtTime(peakGain, start + attack);
+  gainNode.gain.exponentialRampToValueAtTime(0.0001, start + duration + release);
+
+  oscillator.connect(gainNode);
+  gainNode.connect(context.destination);
+  oscillator.start(start);
+  oscillator.stop(start + duration + release + 0.04);
+}
+
+function scheduleNoise(context, start, duration, options = {}) {
+  const release = options.release ?? 0.08;
+  const frameCount = Math.ceil(context.sampleRate * (duration + release + 0.05));
+  const buffer = context.createBuffer(1, frameCount, context.sampleRate);
+  const channel = buffer.getChannelData(0);
+
+  for (let index = 0; index < channel.length; index += 1) {
+    const decay = 1 - index / channel.length;
+    channel[index] = (Math.random() * 2 - 1) * decay;
+  }
+
+  const source = context.createBufferSource();
+  source.buffer = buffer;
+
+  const filter = context.createBiquadFilter();
+  filter.type = "bandpass";
+  filter.frequency.setValueAtTime(options.frequency ?? 1200, start);
+  filter.Q.value = options.q ?? 0.9;
+
+  const gainNode = context.createGain();
+  const attack = options.attack ?? 0.004;
+  const peakGain = options.gain ?? 0.006;
+
+  gainNode.gain.setValueAtTime(0.0001, start);
+  gainNode.gain.exponentialRampToValueAtTime(peakGain, start + attack);
+  gainNode.gain.exponentialRampToValueAtTime(0.0001, start + duration + release);
+
+  source.connect(filter);
+  filter.connect(gainNode);
+  gainNode.connect(context.destination);
+
+  source.start(start);
+  source.stop(start + duration + release + 0.05);
+}
+
 function populatePlayerCountOptions() {
   for (let count = MIN_PLAYERS; count <= MAX_PLAYERS; count += 1) {
     playerCountSelect.appendChild(createOption(count, `${count}명`));
@@ -573,6 +924,8 @@ function getCitizenCount() {
 }
 
 function startGameFromSetup() {
+  primeAudioFromGesture();
+
   if (getCitizenCount() < 1) {
     window.alert("시민이 최소 1명은 있어야 합니다.");
     return;
@@ -639,6 +992,8 @@ function createId() {
 }
 
 function handlePrimaryAction() {
+  primeAudioFromGesture();
+
   switch (state.phase) {
     case "reveal-entry":
       renderRevealRole();
@@ -775,6 +1130,7 @@ function renderRevealEntry() {
   secretName.textContent = player.label;
   secretInstruction.textContent = `${player.label}만 눈을 뜨고 화면을 확인하세요. 준비가 되면 직업을 공개합니다.`;
   primaryActionButton.textContent = "직업 확인";
+  announceScene("reveal-entry", `${player.label}만 화면을 확인하세요. 준비가 되면 직업 확인 버튼을 눌러 주세요.`);
 }
 
 function renderRevealRole() {
@@ -788,6 +1144,7 @@ function renderRevealRole() {
   secretName.textContent = role.label;
   secretInstruction.textContent = `${buildRoleRevealMessage(player, role)} 확인을 누르면 화면이 닫힙니다.`;
   primaryActionButton.textContent = "확인";
+  announceScene("reveal-role", "지금 화면의 직업을 조용히 확인하세요.");
 }
 
 function renderRevealPass() {
@@ -803,6 +1160,12 @@ function renderRevealPass() {
     ? `${player.label}의 직업 확인이 끝났습니다. 이제 폰을 진행자에게 넘기고 모두 눈을 감아 주세요.`
     : `${player.label}의 직업 확인이 끝났습니다. 이제 폰을 오른쪽으로 넘기고 다음 플레이어만 눈을 뜨세요.`;
   primaryActionButton.textContent = isLastPlayer ? "밤 시작" : "다음 플레이어 준비";
+  announceScene(
+    "reveal-pass",
+    isLastPlayer
+      ? "직업 확인이 끝났습니다. 폰을 진행자에게 넘기고 모두 눈을 감아 주세요."
+      : "직업 확인이 끝났습니다. 폰을 다음 플레이어에게 넘겨 주세요.",
+  );
 }
 
 function buildAllyHint(player) {
@@ -874,6 +1237,7 @@ function startNight() {
   primaryActionButton.textContent = "밤 행동 시작";
 
   addLog(`밤 ${state.round}`, phaseCopy.textContent);
+  announceScene("night-start", "모두 눈을 감아 주세요. 밤이 시작됩니다.");
 }
 
 function buildNightQueue() {
@@ -914,38 +1278,37 @@ function beginNextNightStep() {
   const step = state.activeNightStep;
 
   if (step.type === "mafia") {
-    const actors = step.actorIds.map((id) => findPlayerById(id).label);
-
     phaseKicker.textContent = "밤";
     phaseTitle.textContent = "마피아 차례";
     phaseCopy.textContent = "마피아만 눈을 뜨고 제거할 대상을 선택합니다.";
-    secretLabel.textContent = "행동 플레이어";
-    secretName.textContent = actors.length > 1 ? actors.join(", ") : actors[0];
+    secretLabel.textContent = "비밀 행동";
+    secretName.textContent = "마피아만 눈을 뜨세요";
     secretInstruction.textContent = "마피아만 눈을 뜨고 죽이고 싶은 플레이어를 선택하세요.";
     primaryActionButton.textContent = "죽일 플레이어 선택";
+    announceScene("night-mafia", "마피아만 눈을 뜨고 죽일 플레이어를 선택하세요.");
     return;
   }
-
-  const actor = findPlayerById(step.actorId);
 
   if (step.type === "doctor") {
     phaseKicker.textContent = "밤";
     phaseTitle.textContent = "의사 차례";
     phaseCopy.textContent = "의사만 눈을 뜨고 보호할 대상을 선택합니다.";
-    secretLabel.textContent = "행동 플레이어";
-    secretName.textContent = actor.label;
+    secretLabel.textContent = "비밀 행동";
+    secretName.textContent = "의사만 눈을 뜨세요";
     secretInstruction.textContent = "의사만 눈을 뜨고 살리고 싶은 플레이어를 선택하세요.";
     primaryActionButton.textContent = "살릴 플레이어 선택";
+    announceScene("night-doctor", "의사만 눈을 뜨고 살릴 플레이어를 선택하세요.");
     return;
   }
 
   phaseKicker.textContent = "밤";
   phaseTitle.textContent = "경찰 차례";
   phaseCopy.textContent = "경찰만 눈을 뜨고 조사할 대상을 선택합니다.";
-  secretLabel.textContent = "행동 플레이어";
-  secretName.textContent = actor.label;
+  secretLabel.textContent = "비밀 행동";
+  secretName.textContent = "경찰만 눈을 뜨세요";
   secretInstruction.textContent = "경찰만 눈을 뜨고 확인하고 싶은 플레이어를 선택하세요.";
   primaryActionButton.textContent = "조사할 플레이어 선택";
+  announceScene("night-police", "경찰만 눈을 뜨고 조사할 플레이어를 선택하세요.");
 }
 
 function renderNightChoices() {
@@ -973,6 +1336,7 @@ function renderNightChoices() {
     step.type === "mafia" ? "choice-danger" : "choice-safe",
     (player) => resolveNightChoice(step, player),
   );
+  announceScene(step.type === "mafia" ? "vote-choice" : "reveal-entry");
 }
 
 function resolveNightChoice(step, player) {
@@ -1001,9 +1365,10 @@ function resolveNightChoice(step, player) {
   phaseTitle.textContent = "경찰 결과 확인";
   phaseCopy.textContent = "경찰만 결과를 확인한 뒤 다시 눈을 감아 주세요.";
   secretLabel.textContent = "조사 결과";
-  secretName.textContent = player.label;
+  secretName.textContent = "결과 확인";
   secretInstruction.textContent = `${resultText} 확인이 끝나면 폰을 진행자에게 넘겨 주세요.`;
   primaryActionButton.textContent = "다음 비밀 행동";
+  announceScene("police-result", "조사 결과를 화면으로만 확인하고 다시 눈을 감아 주세요.");
 }
 
 function finishNightStep() {
@@ -1043,6 +1408,7 @@ function resolveNight() {
   secretName.textContent = "모두 눈을 떠 주세요";
   secretInstruction.textContent = "이제 모두 눈을 뜨고 사건 내용을 확인한 뒤 자유 토론을 시작하세요.";
   primaryActionButton.textContent = "낮 토론 시작";
+  announceScene(victim ? "dawn-death" : "dawn-safe", phaseCopy.textContent);
 }
 
 function startDayDiscussion() {
@@ -1060,6 +1426,7 @@ function startDayDiscussion() {
 
   updateStatusPills();
   prepareDiscussionTimer();
+  announceScene("day-discussion", "낮 토론을 시작하세요. 충분히 이야기한 뒤 비밀 투표를 진행하세요.");
 }
 
 function startVoting() {
@@ -1084,6 +1451,7 @@ function renderVoteEntry() {
   secretName.textContent = voter.label;
   secretInstruction.textContent = `${voter.label}만 화면을 보고 처형하고 싶은 플레이어를 선택하세요. 끝나면 다음 사람에게 폰을 넘깁니다.`;
   primaryActionButton.textContent = "투표 열기";
+  announceScene("vote-entry", `${voter.label}만 화면을 보고 비밀 투표를 진행하세요.`);
 }
 
 function renderVoteChoices() {
@@ -1097,6 +1465,7 @@ function renderVoteChoices() {
   phaseCopy.textContent = "오늘 처형할 사람을 한 명 선택하세요.";
 
   showChoices(candidates, "", (player) => castVote(voter.id, player.id));
+  announceScene("vote-choice", "오늘 처형할 사람을 한 명 선택하세요.");
 }
 
 function castVote(voterId, targetId) {
@@ -1136,6 +1505,7 @@ function resolveVotes() {
     secretInstruction.textContent = tieLine;
     primaryActionButton.textContent = "다음 밤";
     addLog("흩어진 표", tieLine);
+    announceScene("vote-tie", "표가 갈려 아무도 처형되지 않았습니다.");
     return;
   }
 
@@ -1157,6 +1527,7 @@ function resolveVotes() {
   secretName.textContent = executed.label;
   secretInstruction.textContent = `역할은 ${ROLE_INFO[executed.role].label}였습니다.`;
   primaryActionButton.textContent = "다음 밤";
+  announceScene("vote-result", `${executed.label}의 정체가 공개되었습니다.`);
 }
 
 function getWinner() {
@@ -1201,10 +1572,12 @@ function endGame(winner) {
   }
 
   addLog(winner === "town" ? "안개의 종말" : "어둠의 승리", WIN_TEXT[winner]);
+  announceScene(winner === "town" ? "win-town" : "win-mafia", WIN_TEXT[winner]);
 }
 
 function resetToSetup() {
   clearTimer();
+  stopNarration();
   closeLogDrawer();
   closeRestartModal();
   state.awaitingNextGameApproval = false;
@@ -1231,7 +1604,10 @@ function showChoices(players, extraClass, onSelect) {
     if (extraClass) {
       button.classList.add(extraClass);
     }
-    button.addEventListener("click", () => onSelect(player));
+    button.addEventListener("click", () => {
+      primeAudioFromGesture();
+      onSelect(player);
+    });
     choiceList.appendChild(button);
   });
 }
@@ -1342,6 +1718,7 @@ function closeRestartModal() {
 
 function confirmRestartGame() {
   closeRestartModal();
+  stopNarration();
   resetToSetup();
 }
 
@@ -1410,6 +1787,7 @@ function startTimer() {
       state.timerRemaining = 0;
       timerModeLabel.textContent = "시간 종료";
       updateTimerUI();
+      announceScene("timer-end", "토론 시간이 끝났습니다.");
     }
   }, 1000);
 }

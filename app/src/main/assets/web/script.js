@@ -107,8 +107,7 @@ const mafiaLabel = document.getElementById("mafia-label");
 const doctorLabel = document.getElementById("doctor-label");
 const policeLabel = document.getElementById("police-label");
 const setupNote = document.getElementById("setup-note");
-const voiceEnabledToggle = document.getElementById("voice-enabled");
-const effectsEnabledToggle = document.getElementById("effects-enabled");
+const soundEnabledToggle = document.getElementById("sound-enabled");
 const startButton = document.getElementById("start-button");
 
 const brandTitle = document.getElementById("brand-title");
@@ -154,8 +153,7 @@ const state = {
     doctorCount: 1,
     policeCount: 0,
     timerSeconds: 60,
-    voiceEnabled: true,
-    effectsEnabled: true,
+    soundEnabled: true,
   },
   players: [],
   phase: "setup",
@@ -183,9 +181,9 @@ const revealLineMemory = {
 
 const titleArtCache = new Map();
 const audioState = {
-  context: null,
   pendingNarrationTimer: null,
   preferredVoice: null,
+  welcomePlayed: false,
 };
 const STORE_CAPTURE_MODE = new URLSearchParams(window.location.search).get("storeCapture");
 
@@ -215,8 +213,7 @@ function bootstrap() {
   doctorCountSelect.addEventListener("change", handleConfigChange);
   policeCountSelect.addEventListener("change", handleConfigChange);
   timerSecondsSelect.addEventListener("change", handleConfigChange);
-  voiceEnabledToggle?.addEventListener("change", handleAudioPreferenceChange);
-  effectsEnabledToggle?.addEventListener("change", handleAudioPreferenceChange);
+  soundEnabledToggle?.addEventListener("change", handleAudioPreferenceChange);
   startButton.addEventListener("click", startGameFromSetup);
   primaryActionButton.addEventListener("click", handlePrimaryAction);
   restartGameButton.addEventListener("click", handleRestartRequest);
@@ -228,6 +225,7 @@ function bootstrap() {
   restartModalBackdrop.addEventListener("click", closeRestartModal);
   restartCancelButton.addEventListener("click", closeRestartModal);
   restartConfirmButton.addEventListener("click", confirmRestartGame);
+  playWelcomeGreeting(320);
 }
 
 function handleRestartRequest() {
@@ -504,8 +502,14 @@ function restoreAudioPreferences() {
     }
 
     const parsed = JSON.parse(saved);
-    state.config.voiceEnabled = parsed.voiceEnabled !== false;
-    state.config.effectsEnabled = parsed.effectsEnabled !== false;
+    if (typeof parsed.soundEnabled === "boolean") {
+      state.config.soundEnabled = parsed.soundEnabled;
+      return;
+    }
+
+    if (typeof parsed.voiceEnabled === "boolean") {
+      state.config.soundEnabled = parsed.voiceEnabled;
+    }
   } catch (error) {
     console.warn("오디오 설정을 불러오지 못했습니다.", error);
   }
@@ -516,8 +520,7 @@ function saveAudioPreferences() {
     window.localStorage.setItem(
       AUDIO_STORAGE_KEY,
       JSON.stringify({
-        voiceEnabled: state.config.voiceEnabled,
-        effectsEnabled: state.config.effectsEnabled,
+        soundEnabled: state.config.soundEnabled,
       }),
     );
   } catch (error) {
@@ -526,30 +529,31 @@ function saveAudioPreferences() {
 }
 
 function syncAudioPreferenceControls() {
-  if (voiceEnabledToggle) {
-    voiceEnabledToggle.checked = state.config.voiceEnabled;
-  }
-
-  if (effectsEnabledToggle) {
-    effectsEnabledToggle.checked = state.config.effectsEnabled;
+  if (soundEnabledToggle) {
+    soundEnabledToggle.checked = state.config.soundEnabled;
   }
 }
 
 function handleAudioPreferenceChange() {
   primeAudioFromGesture();
 
-  state.config.voiceEnabled = voiceEnabledToggle?.checked ?? true;
-  state.config.effectsEnabled = effectsEnabledToggle?.checked ?? true;
+  state.config.soundEnabled = soundEnabledToggle?.checked ?? true;
   saveAudioPreferences();
 
-  if (!state.config.voiceEnabled) {
+  if (!state.config.soundEnabled) {
     stopNarration();
+    return;
+  }
+
+  if (state.phase === "setup") {
+    playWelcomeGreeting(140);
   }
 }
 
 function installAudioInteractions() {
   const unlockAudio = () => {
     primeAudioFromGesture();
+    playWelcomeGreeting(120);
   };
 
   window.addEventListener("pointerdown", unlockAudio, { once: true, passive: true });
@@ -583,20 +587,7 @@ function cachePreferredVoice() {
 }
 
 function primeAudioFromGesture() {
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContextClass) {
-    return null;
-  }
-
-  if (!audioState.context) {
-    audioState.context = new AudioContextClass();
-  }
-
-  if (audioState.context.state === "suspended") {
-    audioState.context.resume().catch(() => {});
-  }
-
-  return audioState.context;
+  return null;
 }
 
 function stopNarration() {
@@ -610,30 +601,47 @@ function stopNarration() {
   }
 }
 
+function playWelcomeGreeting(delayMs = 180) {
+  if (!state.config.soundEnabled || audioState.welcomePlayed) {
+    return;
+  }
+
+  if (audioState.pendingNarrationTimer) {
+    window.clearTimeout(audioState.pendingNarrationTimer);
+    audioState.pendingNarrationTimer = null;
+  }
+
+  audioState.pendingNarrationTimer = window.setTimeout(() => {
+    audioState.pendingNarrationTimer = null;
+    speakNarration("마피아 게임에 오신 걸 환영합니다.", {
+      onStart: () => {
+        audioState.welcomePlayed = true;
+      },
+    });
+  }, delayMs);
+}
+
 function announceScene(effectName, voiceText = "", options = {}) {
+  if (!options.allowSceneVoice || !voiceText || !state.config.soundEnabled) {
+    return;
+  }
+
   if (options.interrupt !== false) {
     stopNarration();
   }
 
-  if (effectName) {
-    playEffect(effectName);
-  }
-
-  if (!voiceText || !state.config.voiceEnabled) {
-    return;
-  }
-
-  const delayMs = options.delayMs ?? (state.config.effectsEnabled ? 140 : 0);
+  const delayMs = options.delayMs ?? 0;
   const speechOptions = options.speech ?? {};
 
   audioState.pendingNarrationTimer = window.setTimeout(() => {
+    audioState.pendingNarrationTimer = null;
     speakNarration(voiceText, speechOptions);
   }, delayMs);
 }
 
 function speakNarration(text, options = {}) {
   if (
-    !state.config.voiceEnabled ||
+    !state.config.soundEnabled ||
     !("speechSynthesis" in window) ||
     typeof window.SpeechSynthesisUtterance !== "function"
   ) {
@@ -656,120 +664,16 @@ function speakNarration(text, options = {}) {
     utterance.voice = preferredVoice;
   }
 
+  if (typeof options.onStart === "function") {
+    utterance.onstart = options.onStart;
+  }
+
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(utterance);
 }
 
 function playEffect(effectName) {
-  if (!state.config.effectsEnabled) {
-    return;
-  }
-
-  const context = primeAudioFromGesture();
-  if (!context) {
-    return;
-  }
-
-  const start = context.currentTime + 0.01;
-
-  switch (effectName) {
-    case "reveal-entry":
-      scheduleTone(context, start, 520, 0.05, { type: "triangle", gain: 0.024 });
-      scheduleTone(context, start + 0.08, 760, 0.08, { type: "triangle", gain: 0.02 });
-      break;
-    case "reveal-role":
-      scheduleTone(context, start, 340, 0.16, {
-        type: "sawtooth",
-        gain: 0.028,
-        endFrequency: 430,
-      });
-      scheduleNoise(context, start + 0.02, 0.08, { gain: 0.006, frequency: 1600, q: 1.4 });
-      break;
-    case "reveal-pass":
-      scheduleTone(context, start, 660, 0.05, { type: "triangle", gain: 0.018 });
-      scheduleTone(context, start + 0.06, 880, 0.05, { type: "triangle", gain: 0.015 });
-      break;
-    case "night-start":
-      scheduleTone(context, start, 180, 0.3, {
-        type: "sine",
-        gain: 0.036,
-        endFrequency: 110,
-      });
-      scheduleNoise(context, start + 0.03, 0.14, { gain: 0.0035, frequency: 520, q: 0.75 });
-      break;
-    case "night-mafia":
-      scheduleTone(context, start, 150, 0.12, {
-        type: "sawtooth",
-        gain: 0.032,
-        endFrequency: 116,
-      });
-      scheduleTone(context, start + 0.18, 126, 0.12, {
-        type: "sawtooth",
-        gain: 0.026,
-        endFrequency: 98,
-      });
-      break;
-    case "night-doctor":
-      scheduleTone(context, start, 430, 0.08, { type: "triangle", gain: 0.024 });
-      scheduleTone(context, start + 0.09, 620, 0.1, { type: "triangle", gain: 0.018 });
-      break;
-    case "night-police":
-      scheduleTone(context, start, 460, 0.07, { type: "square", gain: 0.014 });
-      scheduleTone(context, start + 0.08, 620, 0.06, { type: "square", gain: 0.012 });
-      scheduleTone(context, start + 0.16, 520, 0.08, { type: "square", gain: 0.011 });
-      break;
-    case "police-result":
-      scheduleTone(context, start, 740, 0.12, { type: "triangle", gain: 0.018 });
-      break;
-    case "dawn-death":
-      scheduleTone(context, start, 320, 0.22, { type: "triangle", gain: 0.026 });
-      scheduleNoise(context, start + 0.12, 0.16, { gain: 0.006, frequency: 900, q: 1 });
-      break;
-    case "dawn-safe":
-      scheduleTone(context, start, 420, 0.08, { type: "triangle", gain: 0.018 });
-      scheduleTone(context, start + 0.1, 560, 0.12, { type: "triangle", gain: 0.015 });
-      break;
-    case "day-discussion":
-      scheduleTone(context, start, 390, 0.08, { type: "triangle", gain: 0.02 });
-      scheduleTone(context, start + 0.09, 520, 0.12, { type: "triangle", gain: 0.016 });
-      break;
-    case "vote-entry":
-      scheduleTone(context, start, 170, 0.05, {
-        type: "sine",
-        gain: 0.048,
-        endFrequency: 124,
-      });
-      scheduleNoise(context, start, 0.04, { gain: 0.012, frequency: 220, q: 0.8 });
-      break;
-    case "vote-choice":
-      scheduleTone(context, start, 500, 0.06, { type: "square", gain: 0.014 });
-      break;
-    case "vote-tie":
-      scheduleTone(context, start, 400, 0.1, { type: "triangle", gain: 0.018 });
-      scheduleTone(context, start + 0.14, 350, 0.14, { type: "triangle", gain: 0.016 });
-      break;
-    case "vote-result":
-      scheduleTone(context, start, 260, 0.08, { type: "sawtooth", gain: 0.026 });
-      scheduleTone(context, start + 0.1, 220, 0.14, { type: "triangle", gain: 0.02 });
-      break;
-    case "timer-end":
-      scheduleTone(context, start, 920, 0.03, { type: "square", gain: 0.012 });
-      scheduleTone(context, start + 0.12, 920, 0.03, { type: "square", gain: 0.012 });
-      scheduleTone(context, start + 0.24, 920, 0.04, { type: "square", gain: 0.014 });
-      break;
-    case "win-town":
-      scheduleTone(context, start, 420, 0.12, { type: "triangle", gain: 0.018 });
-      scheduleTone(context, start + 0.12, 560, 0.12, { type: "triangle", gain: 0.018 });
-      scheduleTone(context, start + 0.24, 700, 0.18, { type: "triangle", gain: 0.02 });
-      break;
-    case "win-mafia":
-      scheduleTone(context, start, 310, 0.14, { type: "sawtooth", gain: 0.022 });
-      scheduleTone(context, start + 0.14, 250, 0.16, { type: "sawtooth", gain: 0.024 });
-      scheduleTone(context, start + 0.3, 196, 0.24, { type: "triangle", gain: 0.026 });
-      break;
-    default:
-      scheduleTone(context, start, 540, 0.04, { type: "triangle", gain: 0.012 });
-  }
+  return effectName;
 }
 
 function scheduleTone(context, start, frequency, duration, options = {}) {

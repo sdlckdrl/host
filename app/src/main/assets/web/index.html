@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>마피아게임: 라스트 알리바이</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="fog fog-left"></div>
+    <div class="fog fog-right"></div>
+
+    <main class="app-shell">
+      <header class="top-bar">
+        <div class="brand-lockup">
+          <p class="eyebrow">Suspicion Party Thriller</p>
+          <div class="title-art-stack brand-title-stack">
+            <h1 class="title-art-source" id="brand-title">마피아게임</h1>
+            <img class="title-art-image hidden" id="brand-title-image" alt="" aria-hidden="true" />
+          </div>
+          <p class="brand-subtitle"><span>라스트 알리바이</span></p>
+        </div>
+        <button type="button" class="ghost-button hidden" id="log-toggle-button">
+          사건 기록
+        </button>
+      </header>
+
+      <section class="main-panel">
+        <section class="view setup-view" id="setup-view">
+          <div class="panel-head compact">
+            <div>
+              <p class="panel-kicker">Game Setup</p>
+              <h2>인원과 직업 수를 정하세요</h2>
+            </div>
+            <p class="panel-copy">
+              이름 입력 없이 플레이어 번호로만 진행합니다. 각 확인 단계가 끝날 때마다 폰을 오른쪽으로 넘겨 주세요.
+            </p>
+          </div>
+
+          <div class="setup-grid">
+            <label class="field">
+              <span>플레이어 수</span>
+              <select id="player-count"></select>
+            </label>
+            <label class="field">
+              <span id="mafia-label">마피아</span>
+              <select id="mafia-count"></select>
+            </label>
+            <label class="field">
+              <span id="doctor-label">의사</span>
+              <select id="doctor-count"></select>
+            </label>
+            <label class="field">
+              <span id="police-label">경찰</span>
+              <select id="police-count"></select>
+            </label>
+            <label class="field">
+              <span>토론 타이머</span>
+              <select id="timer-seconds">
+                <option value="0">수동</option>
+                <option value="30">30초</option>
+                <option value="60" selected>60초</option>
+                <option value="90">90초</option>
+                <option value="120">120초</option>
+              </select>
+            </label>
+            <div class="summary-card" id="setup-summary"></div>
+          </div>
+
+          <div class="setup-note" id="setup-note">
+            3명 기준은 의사 최대 1명, 경찰 최대 0명으로 제한됩니다. 인원이 늘어나면 의사와 경찰 최대치도 함께 늘어납니다.
+          </div>
+
+          <button type="button" class="primary-button" id="start-button">
+            게임 시작
+          </button>
+        </section>
+
+        <section class="view game-view hidden" id="game-view">
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker" id="phase-kicker">Secret Briefing</p>
+              <div class="title-art-stack phase-title-stack">
+                <h2 class="title-art-source" id="phase-title">직업 배정</h2>
+                <img class="title-art-image hidden" id="phase-title-image" alt="" aria-hidden="true" />
+              </div>
+            </div>
+            <p class="panel-copy" id="phase-copy"></p>
+          </div>
+
+          <div class="status-row">
+            <span class="status-pill" id="round-pill">직업 배정</span>
+            <span class="status-pill" id="alive-pill">생존 0명</span>
+            <span class="status-pill" id="config-pill">시민 0명</span>
+            <button type="button" class="ghost-button status-action-button" id="restart-game-button">
+              처음부터 다시 시작
+            </button>
+          </div>
+
+          <div class="game-main">
+            <section class="action-panel">
+              <div class="secret-card" id="secret-card">
+                <p class="secret-label" id="secret-label">다음 플레이어</p>
+                <div class="title-art-stack secret-name-stack">
+                  <h3 class="title-art-source" id="secret-name">플레이어</h3>
+                  <img class="title-art-image hidden" id="secret-name-image" alt="" aria-hidden="true" />
+                </div>
+                <p class="secret-instruction" id="secret-instruction"></p>
+                <button type="button" class="primary-button" id="primary-action-button">
+                  확인
+                </button>
+              </div>
+
+              <div class="choice-list hidden" id="choice-list"></div>
+            </section>
+
+            <section class="info-panel" id="game-info-panel">
+              <div class="side-card roster-card" id="roster-card">
+                <div class="side-head">
+                  <p class="side-kicker">Roster</p>
+                  <span id="roster-meta">사망자만 역할 공개</span>
+                </div>
+                <div class="player-chip-list" id="player-list"></div>
+              </div>
+
+              <div class="side-card timer-card" id="timer-card">
+                <div class="side-head">
+                  <p class="side-kicker">Discussion Timer</p>
+                  <span id="timer-mode-label">대기 중</span>
+                </div>
+                <div class="timer-value" id="timer-value">01:00</div>
+                <div class="timer-actions">
+                  <button type="button" class="secondary-button" id="timer-toggle-button" disabled>
+                    시작
+                  </button>
+                  <button type="button" class="ghost-button" id="timer-reset-button" disabled>
+                    리셋
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+      </section>
+
+      <section class="drawer hidden" id="log-drawer" aria-hidden="true">
+        <div class="drawer-backdrop" id="log-backdrop"></div>
+        <div class="drawer-panel">
+          <div class="drawer-head">
+            <div>
+              <p class="panel-kicker">Narration</p>
+              <h2>사건 기록</h2>
+            </div>
+            <button type="button" class="ghost-button" id="log-close-button">닫기</button>
+          </div>
+          <div class="log-list" id="log-list"></div>
+        </div>
+      </section>
+
+      <section class="modal hidden" id="restart-modal" aria-hidden="true">
+        <div class="modal-backdrop" id="restart-modal-backdrop"></div>
+        <div class="modal-panel">
+          <p class="panel-kicker">Restart</p>
+          <h2>처음부터 다시 시작</h2>
+          <p class="modal-copy">지금 게임을 끝내고 설정 첫 화면으로 돌아갈까요?</p>
+          <div class="modal-actions">
+            <button type="button" class="ghost-button" id="restart-cancel-button">취소</button>
+            <button type="button" class="primary-button" id="restart-confirm-button">다시 시작</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <template id="choice-template">
+      <button type="button" class="choice-button"></button>
+    </template>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

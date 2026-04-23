@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">마피아게임</string>
+    <string name="splash_content_description">마피아게임 라스트 알리바이 시작 화면</string>
+    <string name="exit_prompt">뒤로가기를 한 번 더 누르면 앱이 종료됩니다.</string>
+    <string name="admob_app_id">ca-app-pub-3940256099942544~3347511713</string>
+    <string name="admob_banner_unit_id">ca-app-pub-3940256099942544/9214589741</string>
+    <string name="admob_interstitial_unit_id">ca-app-pub-3940256099942544/1033173712</string>
+</resources>

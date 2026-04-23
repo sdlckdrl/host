@@ -6,6 +6,7 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.speech.tts.TextToSpeech
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
@@ -26,6 +27,7 @@ import com.google.android.gms.ads.LoadAdError
 import com.google.android.gms.ads.MobileAds
 import com.google.android.gms.ads.interstitial.InterstitialAd
 import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
+import java.util.Locale
 
 class MainActivity : Activity() {
     private lateinit var webView: WebView
@@ -41,10 +43,14 @@ class MainActivity : Activity() {
     private var currentPhase = "setup"
     private var completedGamesThisSession = 0
     private var awaitingNextGameApproval = false
+    private var textToSpeech: TextToSpeech? = null
+    private var ttsReady = false
+    private var pendingSpeech: PendingSpeech? = null
 
     private var lastBackPressedAt = 0L
     private var exitToast: Toast? = null
     private val backCallback = OnBackInvokedCallback { handleBackPress() }
+    private data class PendingSpeech(val text: String, val rate: Float, val pitch: Float)
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -77,6 +83,7 @@ class MainActivity : Activity() {
             settings.cacheMode = WebSettings.LOAD_DEFAULT
             settings.useWideViewPort = true
             settings.loadWithOverviewMode = true
+            settings.mediaPlaybackRequiresUserGesture = false
             overScrollMode = WebView.OVER_SCROLL_NEVER
             isVerticalScrollBarEnabled = false
             isHorizontalScrollBarEnabled = false
@@ -87,6 +94,7 @@ class MainActivity : Activity() {
         }
 
         webViewContainer.addView(webView)
+        initializeTextToSpeech()
         initializeAds()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -339,10 +347,73 @@ class MainActivity : Activity() {
             onBackInvokedDispatcher.unregisterOnBackInvokedCallback(backCallback)
         }
         bannerView?.destroy()
+        textToSpeech?.stop()
+        textToSpeech?.shutdown()
+        textToSpeech = null
         if (::webView.isInitialized) {
             webView.destroy()
         }
         super.onDestroy()
+    }
+
+    private fun initializeTextToSpeech() {
+        if (textToSpeech != null) {
+            return
+        }
+
+        textToSpeech = TextToSpeech(this) { status ->
+            val engine = textToSpeech ?: return@TextToSpeech
+            if (status != TextToSpeech.SUCCESS) {
+                ttsReady = false
+                return@TextToSpeech
+            }
+
+            val koreanResult = engine.setLanguage(Locale.KOREAN)
+            ttsReady =
+                koreanResult != TextToSpeech.LANG_MISSING_DATA &&
+                koreanResult != TextToSpeech.LANG_NOT_SUPPORTED
+
+            if (!ttsReady) {
+                val fallbackResult = engine.setLanguage(Locale.getDefault())
+                ttsReady =
+                    fallbackResult != TextToSpeech.LANG_MISSING_DATA &&
+                    fallbackResult != TextToSpeech.LANG_NOT_SUPPORTED
+            }
+
+            val queuedSpeech = pendingSpeech ?: return@TextToSpeech
+            pendingSpeech = null
+            speakNarration(queuedSpeech.text, queuedSpeech.rate, queuedSpeech.pitch)
+        }
+    }
+
+    private fun speakNarration(text: String, rate: Float, pitch: Float) {
+        val message = text.trim()
+        if (message.isEmpty()) {
+            return
+        }
+
+        val engine = textToSpeech
+        if (engine == null) {
+            pendingSpeech = PendingSpeech(message, rate, pitch)
+            initializeTextToSpeech()
+            return
+        }
+
+        if (!ttsReady) {
+            pendingSpeech = PendingSpeech(message, rate, pitch)
+            return
+        }
+
+        engine.stop()
+        engine.setSpeechRate(rate.coerceIn(0.5f, 1.4f))
+        engine.setPitch(pitch.coerceIn(0.6f, 1.4f))
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            engine.speak(message, TextToSpeech.QUEUE_FLUSH, null, "fogbound-narration")
+        } else {
+            @Suppress("DEPRECATION")
+            engine.speak(message, TextToSpeech.QUEUE_FLUSH, null)
+        }
     }
 
     private inner class GameBridge {
@@ -368,6 +439,25 @@ class MainActivity : Activity() {
         fun requestNextGameStart() {
             runOnUiThread {
                 handleNextGameRequest()
+            }
+        }
+
+        @JavascriptInterface
+        fun speakText(text: String?, rate: Float, pitch: Float) {
+            val safeText = text?.trim().orEmpty()
+            if (safeText.isEmpty()) {
+                return
+            }
+
+            runOnUiThread {
+                speakNarration(safeText, rate, pitch)
+            }
+        }
+
+        @JavascriptInterface
+        fun stopNarration() {
+            runOnUiThread {
+                textToSpeech?.stop()
             }
         }
     }

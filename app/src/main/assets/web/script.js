@@ -94,6 +94,20 @@ const WIN_TEXT = {
 const MIN_PLAYERS = 3;
 const MAX_PLAYERS = 8;
 const AUDIO_STORAGE_KEY = "fogbound-mafia-audio-settings-v1";
+const RECORDED_AUDIO_PATHS = {
+  welcome: "./assets/audio/welcome.mp3",
+  "reveal-role": "./assets/audio/reveal-role.mp3",
+  "night-start": "./assets/audio/night-start.mp3",
+  "night-mafia": "./assets/audio/night-mafia.mp3",
+  "night-doctor": "./assets/audio/night-doctor.mp3",
+  "night-police": "./assets/audio/night-police.mp3",
+  "police-result": "./assets/audio/police-result.mp3",
+  "day-discussion": "./assets/audio/day-discussion.mp3",
+  "vote-entry": "./assets/audio/vote-entry.mp3",
+  "vote-choice": "./assets/audio/vote-choice.mp3",
+  "vote-tie": "./assets/audio/vote-tie.mp3",
+  "timer-end": "./assets/audio/timer-end.mp3",
+};
 
 const setupView = document.getElementById("setup-view");
 const gameView = document.getElementById("game-view");
@@ -170,6 +184,7 @@ const state = {
   logCount: 0,
   gameOverReported: false,
   awaitingNextGameApproval: false,
+  voteIntroPlayed: false,
 };
 
 const revealLineMemory = {
@@ -181,6 +196,7 @@ const revealLineMemory = {
 
 const titleArtCache = new Map();
 const audioState = {
+  activeClip: null,
   pendingNarrationTimer: null,
   preferredVoice: null,
   welcomePlayed: false,
@@ -596,6 +612,17 @@ function stopNarration() {
     audioState.pendingNarrationTimer = null;
   }
 
+  if (audioState.activeClip) {
+    audioState.activeClip.pause();
+    audioState.activeClip.currentTime = 0;
+    audioState.activeClip = null;
+  }
+
+  const bridge = getNativeBridge();
+  if (bridge && typeof bridge.stopNarration === "function") {
+    bridge.stopNarration();
+  }
+
   if ("speechSynthesis" in window) {
     window.speechSynthesis.cancel();
   }
@@ -613,16 +640,20 @@ function playWelcomeGreeting(delayMs = 180) {
 
   audioState.pendingNarrationTimer = window.setTimeout(() => {
     audioState.pendingNarrationTimer = null;
-    speakNarration("마피아 게임에 오신 걸 환영합니다.", {
-      onStart: () => {
-        audioState.welcomePlayed = true;
-      },
-    });
+    const markWelcomePlayed = () => {
+      audioState.welcomePlayed = true;
+    };
+    const playedRecordedClip = playRecordedClip("welcome", { onStart: markWelcomePlayed });
+    if (!playedRecordedClip) {
+      speakNarration("마피아 게임에 오신 걸 환영합니다.", {
+        onStart: markWelcomePlayed,
+      });
+    }
   }, delayMs);
 }
 
 function announceScene(effectName, voiceText = "", options = {}) {
-  if (!options.allowSceneVoice || !voiceText || !state.config.soundEnabled) {
+  if (!state.config.soundEnabled) {
     return;
   }
 
@@ -635,21 +666,71 @@ function announceScene(effectName, voiceText = "", options = {}) {
 
   audioState.pendingNarrationTimer = window.setTimeout(() => {
     audioState.pendingNarrationTimer = null;
-    speakNarration(voiceText, speechOptions);
+    const playedRecordedClip = playRecordedClip(effectName, { onStart: options.onStart });
+    if (!playedRecordedClip && options.allowSceneVoice && voiceText) {
+      speakNarration(voiceText, speechOptions);
+    }
   }, delayMs);
 }
 
+function playRecordedClip(sceneKey, options = {}) {
+  const source = RECORDED_AUDIO_PATHS[sceneKey];
+  if (!source) {
+    return false;
+  }
+
+  const clip = new Audio(source);
+  clip.preload = "auto";
+  clip.volume = options.volume ?? 1;
+  audioState.activeClip = clip;
+
+  const releaseClip = () => {
+    if (audioState.activeClip === clip) {
+      audioState.activeClip = null;
+    }
+  };
+
+  clip.addEventListener("ended", releaseClip, { once: true });
+  clip.addEventListener("error", releaseClip, { once: true });
+
+  const playPromise = clip.play();
+  if (playPromise && typeof playPromise.then === "function") {
+    playPromise
+      .then(() => {
+        if (typeof options.onStart === "function") {
+          options.onStart();
+        }
+      })
+      .catch(() => {
+        releaseClip();
+      });
+  } else if (typeof options.onStart === "function") {
+    options.onStart();
+  }
+
+  return true;
+}
+
 function speakNarration(text, options = {}) {
-  if (
-    !state.config.soundEnabled ||
-    !("speechSynthesis" in window) ||
-    typeof window.SpeechSynthesisUtterance !== "function"
-  ) {
+  if (!state.config.soundEnabled) {
     return;
   }
 
   const message = text.replace(/\s+/g, " ").trim();
   if (!message) {
+    return;
+  }
+
+  const bridge = getNativeBridge();
+  if (bridge && typeof bridge.speakText === "function") {
+    if (typeof options.onStart === "function") {
+      options.onStart();
+    }
+    bridge.speakText(message, options.rate ?? 0.96, options.pitch ?? 1);
+    return;
+  }
+
+  if (!("speechSynthesis" in window) || typeof window.SpeechSynthesisUtterance !== "function") {
     return;
   }
 
@@ -851,6 +932,7 @@ function startGameFromSetup() {
   state.logCount = 0;
   state.gameOverReported = false;
   state.awaitingNextGameApproval = false;
+  state.voteIntroPlayed = false;
   logList.innerHTML = "";
   primaryActionButton.disabled = false;
 
@@ -1337,6 +1419,7 @@ function startVoting() {
   clearTimer();
   state.votes = [];
   state.voteQueue = [...getAlivePlayers()];
+  state.voteIntroPlayed = false;
   renderVoteEntry();
 }
 
@@ -1355,7 +1438,10 @@ function renderVoteEntry() {
   secretName.textContent = voter.label;
   secretInstruction.textContent = `${voter.label}만 화면을 보고 처형하고 싶은 플레이어를 선택하세요. 끝나면 다음 사람에게 폰을 넘깁니다.`;
   primaryActionButton.textContent = "투표 열기";
-  announceScene("vote-entry", `${voter.label}만 화면을 보고 비밀 투표를 진행하세요.`);
+  if (!state.voteIntroPlayed) {
+    state.voteIntroPlayed = true;
+    announceScene("vote-entry", "플레이어들은 돌아가며 투표를 진행하세요.");
+  }
 }
 
 function renderVoteChoices() {
@@ -1489,6 +1575,7 @@ function resetToSetup() {
   applyPhaseLayout();
   state.players = [];
   state.logCount = 0;
+  state.voteIntroPlayed = false;
   setupView.classList.remove("hidden");
   gameView.classList.add("hidden");
   logToggleButton.classList.add("hidden");

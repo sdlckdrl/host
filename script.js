@@ -169,7 +169,7 @@ const state = {
     mafiaCount: 1,
     doctorCount: 1,
     policeCount: 0,
-    timerSeconds: 60,
+    timerSeconds: 600,
     soundEnabled: true,
   },
   players: [],
@@ -183,7 +183,7 @@ const state = {
   voteQueue: [],
   votes: [],
   timerId: null,
-  timerRemaining: 60,
+  timerRemaining: 600,
   logCount: 0,
   gameOverReported: false,
   awaitingNextGameApproval: false,
@@ -1121,13 +1121,15 @@ function renderRevealEntry() {
   secretName.textContent = player.label;
   secretInstruction.textContent = `${player.label}만 눈을 뜨고 화면을 확인하세요. 준비가 되면 직업을 공개합니다.`;
   primaryActionButton.textContent = "직업 확인";
-  announceScene("reveal-entry", `${player.label}만 화면을 확인하세요. 준비가 되면 직업 확인 버튼을 눌러 주세요.`);
+  if (!state.revealRolePromptPlayed) {
+    state.revealRolePromptPlayed = true;
+    announceScene("reveal-role", "지금 화면의 직업을 조용히 확인하세요.");
+  }
 }
 
 function renderRevealRole() {
   const player = state.players[state.revealIndex];
   const role = ROLE_INFO[player.role];
-  const shouldPlayRevealPrompt = !state.revealRolePromptPlayed;
 
   state.phase = "reveal-role";
   applyPhaseLayout();
@@ -1136,10 +1138,6 @@ function renderRevealRole() {
   secretName.textContent = role.label;
   secretInstruction.textContent = `${buildRoleRevealMessage(player, role)} 확인을 누르면 화면이 닫힙니다.`;
   primaryActionButton.textContent = "확인";
-  if (shouldPlayRevealPrompt) {
-    state.revealRolePromptPlayed = true;
-    announceScene("reveal-role", "지금 화면의 직업을 조용히 확인하세요.");
-  }
 }
 
 function renderRevealPass() {
@@ -1464,7 +1462,6 @@ function renderVoteChoices() {
   phaseCopy.textContent = "오늘 처형할 사람을 한 명 선택하세요.";
 
   showChoices(candidates, "", (player) => castVote(voter.id, player.id));
-  announceScene("vote-choice", "오늘 처형할 사람을 한 명 선택하세요.");
 }
 
 function castVote(voterId, targetId) {
@@ -1874,7 +1871,7 @@ function configureStoreCaptureConfig() {
   mafiaCountSelect.value = "1";
   doctorCountSelect.value = "1";
   policeCountSelect.value = "1";
-  timerSecondsSelect.value = "60";
+  timerSecondsSelect.value = "600";
   handleConfigChange();
 }
 

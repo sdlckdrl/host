@@ -16,8 +16,6 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.Toast
-import android.window.OnBackInvokedCallback
-import android.window.OnBackInvokedDispatcher
 import com.google.android.gms.ads.AdListener
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
@@ -49,7 +47,7 @@ class MainActivity : Activity() {
 
     private var lastBackPressedAt = 0L
     private var exitToast: Toast? = null
-    private val backCallback = OnBackInvokedCallback { handleBackPress() }
+    private var backCallback: Any? = null
     private data class PendingSpeech(val text: String, val rate: Float, val pitch: Float)
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -97,12 +95,7 @@ class MainActivity : Activity() {
         initializeTextToSpeech()
         initializeAds()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            onBackInvokedDispatcher.registerOnBackInvokedCallback(
-                OnBackInvokedDispatcher.PRIORITY_DEFAULT,
-                backCallback,
-            )
-        }
+        registerBackCallbackIfNeeded()
     }
 
     @Deprecated("Deprecated in Java")
@@ -341,11 +334,32 @@ class MainActivity : Activity() {
         exitToast?.show()
     }
 
+    private fun registerBackCallbackIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return
+        }
+
+        val callback = android.window.OnBackInvokedCallback { handleBackPress() }
+        backCallback = callback
+        onBackInvokedDispatcher.registerOnBackInvokedCallback(
+            android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+            callback,
+        )
+    }
+
+    private fun unregisterBackCallbackIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return
+        }
+
+        val callback = backCallback as? android.window.OnBackInvokedCallback ?: return
+        onBackInvokedDispatcher.unregisterOnBackInvokedCallback(callback)
+        backCallback = null
+    }
+
     override fun onDestroy() {
         exitToast?.cancel()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            onBackInvokedDispatcher.unregisterOnBackInvokedCallback(backCallback)
-        }
+        unregisterBackCallbackIfNeeded()
         bannerView?.destroy()
         textToSpeech?.stop()
         textToSpeech?.shutdown()

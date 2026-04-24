@@ -107,6 +107,8 @@ const RECORDED_AUDIO_PATHS = {
   "vote-choice": "./assets/audio/vote-choice.mp3",
   "vote-tie": "./assets/audio/vote-tie.mp3",
   "timer-end": "./assets/audio/timer-end.mp3",
+  "win-town": "./assets/audio/win-town.mp3",
+  "win-mafia": "./assets/audio/win-mafia.mp3",
 };
 
 const setupView = document.getElementById("setup-view");
@@ -184,6 +186,7 @@ const state = {
   logCount: 0,
   gameOverReported: false,
   awaitingNextGameApproval: false,
+  revealRolePromptPlayed: false,
   voteIntroPlayed: false,
 };
 
@@ -932,6 +935,7 @@ function startGameFromSetup() {
   state.logCount = 0;
   state.gameOverReported = false;
   state.awaitingNextGameApproval = false;
+  state.revealRolePromptPlayed = false;
   state.voteIntroPlayed = false;
   logList.innerHTML = "";
   primaryActionButton.disabled = false;
@@ -1122,6 +1126,7 @@ function renderRevealEntry() {
 function renderRevealRole() {
   const player = state.players[state.revealIndex];
   const role = ROLE_INFO[player.role];
+  const shouldPlayRevealPrompt = !state.revealRolePromptPlayed;
 
   state.phase = "reveal-role";
   applyPhaseLayout();
@@ -1130,7 +1135,10 @@ function renderRevealRole() {
   secretName.textContent = role.label;
   secretInstruction.textContent = `${buildRoleRevealMessage(player, role)} 확인을 누르면 화면이 닫힙니다.`;
   primaryActionButton.textContent = "확인";
-  announceScene("reveal-role", "지금 화면의 직업을 조용히 확인하세요.");
+  if (shouldPlayRevealPrompt) {
+    state.revealRolePromptPlayed = true;
+    announceScene("reveal-role", "지금 화면의 직업을 조용히 확인하세요.");
+  }
 }
 
 function renderRevealPass() {
@@ -1141,15 +1149,15 @@ function renderRevealPass() {
   applyPhaseLayout();
 
   secretLabel.textContent = "폰 넘기기";
-  secretName.textContent = isLastPlayer ? "진행자에게 전달" : `다음은 플레이어 ${player.slot + 1}`;
+  secretName.textContent = isLastPlayer ? "폰을 가운데로 놓아 주세요" : `다음은 플레이어 ${player.slot + 1}`;
   secretInstruction.textContent = isLastPlayer
-    ? `${player.label}의 직업 확인이 끝났습니다. 이제 폰을 진행자에게 넘기고 모두 눈을 감아 주세요.`
+    ? `${player.label}의 직업 확인이 끝났습니다. 이제 폰을 가운데로 놓고 손가락을 가운데로 모아 주세요. 모두 준비되면 밤을 시작합니다.`
     : `${player.label}의 직업 확인이 끝났습니다. 이제 폰을 오른쪽으로 넘기고 다음 플레이어만 눈을 뜨세요.`;
   primaryActionButton.textContent = isLastPlayer ? "밤 시작" : "다음 플레이어 준비";
   announceScene(
     "reveal-pass",
     isLastPlayer
-      ? "직업 확인이 끝났습니다. 폰을 진행자에게 넘기고 모두 눈을 감아 주세요."
+      ? "직업 확인이 끝났습니다. 이제 폰을 가운데로 놓고 손가락을 가운데로 모아 주세요."
       : "직업 확인이 끝났습니다. 폰을 다음 플레이어에게 넘겨 주세요.",
   );
 }
@@ -1575,6 +1583,7 @@ function resetToSetup() {
   applyPhaseLayout();
   state.players = [];
   state.logCount = 0;
+  state.revealRolePromptPlayed = false;
   state.voteIntroPlayed = false;
   setupView.classList.remove("hidden");
   gameView.classList.add("hidden");

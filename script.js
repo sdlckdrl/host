@@ -103,6 +103,7 @@ const RECORDED_AUDIO_PATHS = {
   "night-doctor": "./assets/audio/night-doctor.mp3",
   "night-police": "./assets/audio/night-police.mp3",
   "police-result": "./assets/audio/police-result.mp3",
+  "dawn-open": "./assets/audio/dawn-open.mp3",
   "day-discussion": "./assets/audio/day-discussion.mp3",
   "vote-entry": "./assets/audio/vote-entry.mp3",
   "vote-choice": "./assets/audio/vote-choice.mp3",
@@ -1401,7 +1402,7 @@ function resolveNight() {
   secretName.textContent = "모두 눈을 떠 주세요";
   secretInstruction.textContent = "이제 모두 눈을 뜨고 사건 내용을 확인한 뒤 자유 토론을 시작하세요.";
   primaryActionButton.textContent = "낮 토론 시작";
-  announceScene(victim ? "dawn-death" : "dawn-safe", phaseCopy.textContent);
+  announceScene("dawn-open", phaseCopy.textContent);
 }
 
 function startDayDiscussion() {

@@ -97,6 +97,7 @@ const AUDIO_STORAGE_KEY = "fogbound-mafia-audio-settings-v1";
 const RECORDED_AUDIO_PATHS = {
   welcome: "./assets/audio/welcome.mp3",
   "reveal-role": "./assets/audio/reveal-role.mp3",
+  "reveal-pass-final": "./assets/audio/reveal-pass-final.mp3",
   "night-start": "./assets/audio/night-start.mp3",
   "night-mafia": "./assets/audio/night-mafia.mp3",
   "night-doctor": "./assets/audio/night-doctor.mp3",
@@ -1155,7 +1156,7 @@ function renderRevealPass() {
     : `${player.label}의 직업 확인이 끝났습니다. 이제 폰을 오른쪽으로 넘기고 다음 플레이어만 눈을 뜨세요.`;
   primaryActionButton.textContent = isLastPlayer ? "밤 시작" : "다음 플레이어 준비";
   announceScene(
-    "reveal-pass",
+    isLastPlayer ? "reveal-pass-final" : "reveal-pass",
     isLastPlayer
       ? "직업 확인이 끝났습니다. 이제 폰을 가운데로 놓고 손가락을 가운데로 모아 주세요."
       : "직업 확인이 끝났습니다. 폰을 다음 플레이어에게 넘겨 주세요.",
